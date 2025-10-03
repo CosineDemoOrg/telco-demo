@@ -92,6 +92,7 @@ libupf = static_library('upf',
         libpfcp_dep,
         libtun_dep,
         libarp_nd_dep,
+        libogspfcputil_dep,
     ],
     install : false)
 
@@ -102,6 +103,7 @@ libupf_dep = declare_dependency(
         libpfcp_dep,
         libtun_dep,
         libarp_nd_dep,
+        libogspfcputil_dep,
     ])
 
 upf_sources = files('''
