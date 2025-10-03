@@ -3100,6 +3100,7 @@ int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
     int size = 0;
     int i = 0;
     uint16_t mtu = 0;
+    bool added_dns6 = false;
 
     ogs_assert(pco_buf);
     ogs_assert(buffer);
@@ -3255,6 +3256,7 @@ int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
                 smf.ids[smf.num_of_id].len = OGS_IPV6_LEN;
                 smf.ids[smf.num_of_id].data = dns6_primary.sub;
                 smf.num_of_id++;
+                added_dns6 = true;
             }
 
             if (smf_self()->dns6[1]) {
@@ -3265,6 +3267,7 @@ int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
                 smf.ids[smf.num_of_id].len = OGS_IPV6_LEN;
                 smf.ids[smf.num_of_id].data = dns6_secondary.sub;
                 smf.num_of_id++;
+                added_dns6 = true;
             }
             break;
         case OGS_PCO_ID_P_CSCF_IPV4_ADDRESS_REQUEST:
@@ -3321,6 +3324,27 @@ int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
             break;
         default:
             ogs_warn("Unknown PCO ID:(0x%x)", ue.ids[i].id);
+        }
+    }
+
+    /* Ensure IPv6 DNS is provided when configured, even if UE didn't request it.
+     * Some UEs only request IPv4 DNS but operate IPv6/IPv4v6 sessions. */
+    if (!added_dns6 && (smf_self()->dns6[0] || smf_self()->dns6[1])) {
+        if (smf_self()->dns6[0]) {
+            rv = ogs_ipsubnet(&dns6_primary, smf_self()->dns6[0], NULL);
+            ogs_assert(rv == OGS_OK);
+            smf.ids[smf.num_of_id].id = OGS_PCO_ID_DNS_SERVER_IPV6_ADDRESS_REQUEST;
+            smf.ids[smf.num_of_id].len = OGS_IPV6_LEN;
+            smf.ids[smf.num_of_id].data = dns6_primary.sub;
+            smf.num_of_id++;
+        }
+        if (smf_self()->dns6[1]) {
+            rv = ogs_ipsubnet(&dns6_secondary, smf_self()->dns6[1], NULL);
+            ogs_assert(rv == OGS_OK);
+            smf.ids[smf.num_of_id].id = OGS_PCO_ID_DNS_SERVER_IPV6_ADDRESS_REQUEST;
+            smf.ids[smf.num_of_id].len = OGS_IPV6_LEN;
+            smf.ids[smf.num_of_id].data = dns6_secondary.sub;
+            smf.num_of_id++;
         }
     }
 
