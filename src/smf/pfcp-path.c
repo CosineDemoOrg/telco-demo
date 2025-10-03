@@ -19,6 +19,7 @@
 
 #include "sbi-path.h"
 #include "pfcp-path.h"
+#include "ogspfcputil/pfcp_util.h"
 
 /* Converts PFCP "Usage Report" "Report Trigger" bitmask to Gy "Reporting-Reason" AVP enum value.
  * PFCP: 3GPP TS 29.244 sec 8.2.41
@@ -219,30 +220,7 @@ cleanup:
 
 int smf_pfcp_open(void)
 {
-    ogs_socknode_t *node = NULL;
-    ogs_sock_t *sock = NULL;
-
-    /* PFCP Server */
-    ogs_list_for_each(&ogs_pfcp_self()->pfcp_list, node) {
-        sock = ogs_pfcp_server(node);
-        if (!sock) return OGS_ERROR;
-
-        node->poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, pfcp_recv_cb, sock);
-        ogs_assert(node->poll);
-    }
-    ogs_list_for_each(&ogs_pfcp_self()->pfcp_list6, node) {
-        sock = ogs_pfcp_server(node);
-        if (!sock) return OGS_ERROR;
-
-        node->poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, pfcp_recv_cb, sock);
-        ogs_assert(node->poll);
-    }
-
-    OGS_SETUP_PFCP_SERVER;
-
-    return OGS_OK;
+    return ogs_pfcp_util_open_with_cb(pfcp_recv_cb);
 }
 
 void smf_pfcp_close(void)
@@ -252,11 +230,7 @@ void smf_pfcp_close(void)
     ogs_list_for_each(&ogs_pfcp_self()->pfcp_peer_list, pfcp_node)
         pfcp_node_fsm_fini(pfcp_node);
 
-    ogs_freeaddrinfo(ogs_pfcp_self()->pfcp_advertise);
-    ogs_freeaddrinfo(ogs_pfcp_self()->pfcp_advertise6);
-
-    ogs_socknode_remove_all(&ogs_pfcp_self()->pfcp_list);
-    ogs_socknode_remove_all(&ogs_pfcp_self()->pfcp_list6);
+    ogs_pfcp_util_close_sockets();
 }
 
 static void sess_5gc_timeout(ogs_pfcp_xact_t *xact, void *data)
