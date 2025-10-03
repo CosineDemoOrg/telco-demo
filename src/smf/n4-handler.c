@@ -26,6 +26,7 @@
 #include "sbi-path.h"
 #include "ngap-path.h"
 #include "fd-path.h"
+#include "cdr.h"
 
 uint8_t gtp_cause_from_pfcp(uint8_t pfcp_cause, uint8_t gtp_version)
 {
@@ -1557,6 +1558,9 @@ uint8_t smf_epc_n4_handle_session_deletion_response(
             smf_pfcp_urr_usage_report_trigger2diam_gy_reporting_reason(&rep_trig);
     }
 
+    /* Write final CDR record at session deletion */
+    smf_cdr_write_usage(sess, "deletion");
+
     return OGS_PFCP_CAUSE_REQUEST_ACCEPTED;
 }
 
@@ -1721,62 +1725,55 @@ uint8_t smf_n4_handle_session_report_request(
     }
 
     if (report_type.usage_report) {
-        bearer = smf_default_bearer_in_sess(sess);
-        for (i = 0; i < OGS_ARRAY_SIZE(pfcp_req->usage_report); i++) {
-            ogs_pfcp_tlv_usage_report_session_report_request_t *use_rep =
-                &pfcp_req->usage_report[i];
-            uint32_t urr_id;
-            ogs_pfcp_volume_measurement_t volume;
-            ogs_pfcp_usage_report_trigger_t rep_trig;
-            if (use_rep->presence == 0)
-                break;
-            if (use_rep->urr_id.presence == 0)
-                continue;
-            urr_id = use_rep->urr_id.u32;
-            if (!bearer || !bearer->urr || bearer->urr->id != urr_id)
-                continue;
-            ogs_pfcp_parse_volume_measurement(
-                    &volume, &use_rep->volume_measurement);
-            if (volume.ulvol)
-                sess->gy.ul_octets += volume.uplink_volume;
-            if (volume.dlvol)
-                sess->gy.dl_octets += volume.downlink_volume;
-            sess->gy.duration += use_rep->duration_measurement.u32;
-            ogs_pfcp_parse_usage_report_trigger(
-                    &rep_trig, &use_rep->usage_report_trigger);
-            sess->gy.reporting_reason =
-                smf_pfcp_urr_usage_report_trigger2diam_gy_reporting_reason(&rep_trig);
-        }
-        switch (smf_use_gy_iface()) {
-        case 1:
-            if (!sess->gy.final_unit) {
-                smf_gy_send_ccr(
-                        sess, pfcp_xact->id,
-                        OGS_DIAM_GY_CC_REQUEST_TYPE_UPDATE_REQUEST);
-            } else {
-                ogs_debug("[%s:%s] Rx PFCP report after Gy Final Unit Indication",
-                          smf_ue->imsi_bcd, sess->session.name);
-                /* This effectively triggers session release: */
-                cause_value = OGS_PFCP_CAUSE_NO_RESOURCES_AVAILABLE;
+            bearer = smf_default_bearer_in_sess(sess);
+            for (i = 0; i < OGS_ARRAY_SIZE(pfcp_req->usage_report); i++) {
+                ogs_pfcp_tlv_usage_report_session_report_request_t *use_rep =
+                    &pfcp_req->usage_report[i];
+                uint32_t urr_id;
+                ogs_pfcp_volume_measurement_t volume;
+                ogs_pfcp_usage_report_trigger_t rep_trig;
+                if (use_rep->presence == 0)
+                    break;
+                if (use_rep->urr_id.presence == 0)
+                    continue;
+                urr_id = use_rep->urr_id.u32;
+                if (!bearer || !bearer->urr || bearer->urr->id != urr_id)
+                    continue;
+                ogs_pfcp_parse_volume_measurement(
+                        &volume, &use_rep->volume_measurement);
+                if (volume.ulvol)
+                    sess->gy.ul_octets += volume.uplink_volume;
+                if (volume.dlvol)
+                    sess->gy.dl_octets += volume.downlink_volume;
+                sess->gy.duration += use_rep->duration_measurement.u32;
+                ogs_pfcp_parse_usage_report_trigger(
+                        &rep_trig, &use_rep->usage_report_trigger);
+                sess->gy.reporting_reason =
+                    smf_pfcp_urr_usage_report_trigger2diam_gy_reporting_reason(&rep_trig);
             }
-            break;
-        case -1:
-            ogs_error("No Gy Diameter Peer");
-            cause_value = OGS_PFCP_CAUSE_NO_RESOURCES_AVAILABLE;
-            break;
-        /* default: continue below */
-        }
-    }
+            /* Write a CDR record for this usage report */
+            smf_cdr_write_usage(sess, "usage_report");
 
-    /* TS 29.244 sec 8.2.21: At least one bit shall be set to "1". Several bits may be set to "1". */
-    if (report_type.downlink_data_report ||
-        report_type.error_indication_report ||
-        report_type.usage_report) {
-        ogs_assert(OGS_OK ==
-            smf_pfcp_send_session_report_response(
-                pfcp_xact, sess, OGS_PFCP_CAUSE_REQUEST_ACCEPTED));
-        smf_metrics_inst_global_inc(SMF_METR_GLOB_CTR_SM_N4SESSIONREPORTSUCC);
-    } else {
+            switch (smf_use_gy_iface()) {
+                case 1:
+                    if (!sess->gy.final_unit) {
+                        smf_gy_send_ccr(
+                                sess, pfcp_xact->id,
+                                OGS_DIAM_GY_CC_REQUEST_TYPE_UPDATE_REQUEST);
+                    } else {
+                        ogs_debug("[%s:%s] Rx PFCP report after Gy Final Unit Indication",
+                                  smf_ue->imsi_bcd, sess->session.name);
+                        /* This effectively triggers session release: */
+                        cause_value = OGS_PFCP_CAUSE_NO_RESOURCES_AVAILABLE;
+                    }
+                    break;
+                case -1:
+                    ogs_error("No Gy Diameter Peer");
+                    cause_value = OGS_PFCP_CAUSE_NO_RESOURCES_AVAILABLE;
+                    break;
+                /* default: continue below */
+            }
+        } else {
         ogs_error("Not supported Report Type[%d]", report_type.value);
         ogs_assert(OGS_OK ==
             smf_pfcp_send_session_report_response(
